@@ -1,0 +1,4 @@
+,,10000,1:1
+atharva,xyz,2034,AAPL:4|GOOG:2|MSFT:4|TSLA:2
+bhushan,abc,2518,AAPL:3|GOOG:2|MSFT:3|TSLA:2
+harsh,pqr,10000,
