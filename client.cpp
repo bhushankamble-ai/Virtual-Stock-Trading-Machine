@@ -215,7 +215,43 @@ int main() {
         return 0;
     }
 
-    cout << "Connected to Stock Trading Server\n";
+    cout << "Connected to Main Server on Port 8080\n";
+
+    // Receive dedicated port
+    char redirectBuffer[256];
+    memset(redirectBuffer, 0, sizeof(redirectBuffer));
+    int bytes = recv(sock, redirectBuffer, sizeof(redirectBuffer), 0);
+    if(bytes <= 0) {
+        cout << "Failed to receive dedicated port.\n";
+        closesocket(sock);
+        WSACleanup();
+        return 0;
+    }
+
+    string redirectMsg(redirectBuffer, bytes);
+    if(redirectMsg.find("[REDIRECT]") == string::npos) {
+        cout << "Invalid redirect message.\n";
+        closesocket(sock);
+        WSACleanup();
+        return 0;
+    }
+
+    int dedicatedPort = stoi(redirectMsg.substr(11));
+    cout << "Dedicated Port Assigned: " << dedicatedPort << "\n";
+
+    closesocket(sock);
+
+    // Reconnect to dedicated port
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+    server.sin_port = htons(dedicatedPort);
+
+    if(connect(sock, (sockaddr*)&server, sizeof(server)) < 0) {
+        cout << "Failed to connect to dedicated port!\n";
+        WSACleanup();
+        return 0;
+    }
+
+    cout << "Connected to Dedicated Port " << dedicatedPort << " \n";
     thread(receiverThread, sock).detach();
 
     // AUTH
