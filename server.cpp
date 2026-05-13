@@ -141,36 +141,6 @@ void loadUsers() {
     }
 }
 
-// ================= SAVE MARKET =================
-
-void saveMarket() {
-    ofstream file("market.txt");
-    for(auto &m : market) {
-        file << m.first << "," << m.second.price << "," << m.second.available << "\n";
-    }
-}
-
-// ================= LOAD MARKET =================
-
-void loadMarket() {
-    ifstream file("market.txt");
-    if(!file.is_open()) return; // If no file, keep defaults
-
-    string line;
-    while(getline(file, line)) {
-        stringstream ss(line);
-        string symbol, priceStr, availStr;
-        getline(ss, symbol, ',');
-        getline(ss, priceStr, ',');
-        getline(ss, availStr, ',');
-
-        double price = stod(priceStr);
-        int available = stoi(availStr);
-
-        market[symbol] = {price, available};
-    }
-}
-
 // ================= MARKET VIEW =================
 
 string marketView() {
@@ -209,7 +179,6 @@ void updatePrices() {
             x.second.price += change;
             if(x.second.price < 10) x.second.price = 10;
         }
-        saveMarket(); // persist price changes
         mtx.unlock();
     }
 }
@@ -260,7 +229,6 @@ void processQueue() {
                 logRequest(username, msg, "FAILED");
                 continue;
             }
-
             if(cmd == "MARKET") {
                 sendMsg(client, "[MARKET]\n" + marketView());
                 logRequest(username, msg, "SUCCESS");
@@ -277,6 +245,7 @@ void processQueue() {
                 string stock; int qty;
                 ss >> stock >> qty;
 
+                // Check if stock exists
                 if(market.find(stock) == market.end()) {
                     sendMsg(client, "[BUY]\nINVALID STOCK SYMBOL");
                     logRequest(username, msg, "FAILED");
@@ -294,7 +263,6 @@ void processQueue() {
                     u.stocks[stock] += qty;
                     market[stock].available -= qty;
                     saveUsers();
-                    saveMarket();
                     sendMsg(client, "[BUY]\nBUY SUCCESS");
                     sendMsg(client, "[PORT]\n" + portfolio(u));
                     sendMsg(client, "[MARKET]\n" + marketView());
@@ -313,6 +281,7 @@ void processQueue() {
                 string stock; int qty;
                 ss >> stock >> qty;
 
+                // Check if stock exists
                 if(market.find(stock) == market.end()) {
                     sendMsg(client, "[SELL]\nINVALID STOCK SYMBOL");
                     logRequest(username, msg, "FAILED");
@@ -320,11 +289,10 @@ void processQueue() {
                 }
 
                 if(u.stocks[stock] >= qty) {
-                                        u.stocks[stock] -= qty;
+                    u.stocks[stock] -= qty;
                     u.balance += market[stock].price * qty;
                     market[stock].available += qty;
                     saveUsers();
-                    saveMarket();   // <-- persist changes
                     sendMsg(client, "[SELL]\nSELL SUCCESS");
                     sendMsg(client, "[PORT]\n" + portfolio(u));
                     sendMsg(client, "[MARKET]\n" + marketView());
@@ -335,6 +303,7 @@ void processQueue() {
                     logRequest(username, msg, "FAILED");
                 }
             }
+
         }
         this_thread::sleep_for(chrono::milliseconds(100));
     }
@@ -373,7 +342,7 @@ void clientHandler(SOCKET client) {
             }
         }
         else if(cmd == "REGISTER") {
-            if(registerUser(user, pass)) {
+                        if(registerUser(user, pass)) {
                 sendMsg(client, "[REGISTER]\nRegister Success");
             } else {
                 sendMsg(client, "[REGISTER]\nUser Exists");
@@ -429,12 +398,55 @@ void trafficAnalysisMonitor() {
     }
 }
 
+
+// ================= DEDICATED PORT HANDOFF =================
+
+void handleDedicatedClient(SOCKET client) {
+    thread(clientHandler, client).detach();
+}
+
+void assignDedicatedPort(SOCKET initialClient) {
+    SOCKET dedicatedServer = socket(AF_INET, SOCK_STREAM, 0);
+
+    sockaddr_in dedicatedAddr;
+    dedicatedAddr.sin_family = AF_INET;
+    dedicatedAddr.sin_port = htons(0); // let OS choose free port
+    dedicatedAddr.sin_addr.s_addr = INADDR_ANY;
+
+    bind(dedicatedServer, (sockaddr*)&dedicatedAddr, sizeof(dedicatedAddr));
+    listen(dedicatedServer, 1);
+
+    sockaddr_in actualAddr;
+    int len = sizeof(actualAddr);
+    getsockname(dedicatedServer, (sockaddr*)&actualAddr, &len);
+    int dedicatedPort = ntohs(actualAddr.sin_port);
+
+    cout << "Assigned dedicated port " << dedicatedPort << " to new client.\n";
+
+    // Send redirect message without encryption (client is not using receiver thread yet)
+    string redirectMsg = "[REDIRECT] " + to_string(dedicatedPort);
+    send(initialClient, redirectMsg.c_str(), redirectMsg.size(), 0);
+
+    closesocket(initialClient);
+
+    sockaddr_in c;
+    int sz = sizeof(c);
+    SOCKET dedicatedClient = accept(dedicatedServer, (sockaddr*)&c, &sz);
+
+    closesocket(dedicatedServer);
+
+    if(dedicatedClient != INVALID_SOCKET) {
+        cout << "Client connected on dedicated port " << dedicatedPort << ".\n";
+        handleDedicatedClient(dedicatedClient);
+    }
+}
+
+
 // ================= MAIN =================
 
 int main() {
     srand(time(0));
     loadUsers();
-    loadMarket();   // <-- load saved market state
 
     WSADATA ws;
     WSAStartup(MAKEWORD(2,2), &ws);
@@ -453,7 +465,7 @@ int main() {
 
     thread(updatePrices).detach();
     thread(processQueue).detach();
-    thread(trafficAnalysisMonitor).detach();
+    thread(trafficAnalysisMonitor).detach();   // <-- added back
 
     while(true) {
         SOCKET client;
@@ -461,10 +473,11 @@ int main() {
         int sz = sizeof(c);
 
         client = accept(serverSock, (sockaddr*)&c, &sz);
-        thread(clientHandler, client).detach();
+        if(client != INVALID_SOCKET) {
+            thread(assignDedicatedPort, client).detach();
+        }
     }
 
-    saveMarket();   // <-- save before shutdown
     closesocket(serverSock);
     WSACleanup();
     return 0;
