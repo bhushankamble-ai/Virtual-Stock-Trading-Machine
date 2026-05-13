@@ -28,6 +28,7 @@ A multi-threaded client-server based stock trading simulation built using **C++*
 ├── client.cpp
 ├── users.txt
 ├── server_logs.txt
+├── market.txt
 └── README.md
 ```
 
@@ -111,6 +112,8 @@ Start Threads
       |
 Accept Client Connections
       |
+Assign Dedicated Port
+      |
 Authenticate User
       |
 Process Requests
@@ -130,6 +133,8 @@ Send Response
 Start Client
       |
 Connect to Server
+      |
+Redirected to Dedicated Port
       |
 Login / Register
       |
